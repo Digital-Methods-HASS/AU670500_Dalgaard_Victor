@@ -1,0 +1,222 @@
+---
+title: "Homework_7"
+author: "Victor Dalgaard"
+date: "2022-11-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Goal
+
+I want to be able to analyse the data on police shootings from 2013-2020 (july 2020) that were through 2020 nicely collated on summarised on <https://killedbypolice.net/kbp2020>.
+That domain, however, no longer exists - or rather - has been rerouted to <https://robarguns.com/kbp2020> and so we will be using the *archived version* of the site at <http://web.archive.org/web/20200502072010/https://killedbypolice.net/kbp2020/>.
+
+
+```{r libraries, warning=FALSE, message=FALSE}
+library(tidyverse)
+```
+
+# Data
+
+I scrape and clean the data following the instructions on Github:
+
+Then I import the data as a .csv
+```{r data}
+data <- read_csv("data/policekillings2013-2020.csv")
+```
+
+# Analyzing the data
+
+## Age
+
+The most common age to be killed by police is in the late twenties and early thirties, and this has not changed much over time.
+You will need `ggridges` and `statebin` packages here
+
+```{r plot-age}
+library(ggplot2)
+library(ggridges)
+
+data %>% 
+  filter(Gender %in% c("F", "M", "T")) %>% 
+  filter(!is.na(Year)) %>% 
+  ggplot(aes(x = Age,
+             y = factor(Year),
+             fill = Gender)) +
+  geom_density_ridges(alpha = 0.5, 
+                      scale = 0.9)  +
+  theme_ridges(font_size = 10) +
+  scale_x_continuous(breaks = seq(0, 100, 10),
+                     labels = seq(0, 100, 10)) +
+  xlab("Age at death (years)") +
+  ylab("Year") +
+  theme(axis.title = element_text(size = 14))
+```
+
+We can see, however, that with time the age is centering more around 30 rather than 20.
+
+### Race
+
+Of the three ethnic groups that make up most of the deaths, Black and Latino people tend to be younger than White people when they are killed by police.
+
+```{r plot-race}
+library(tidyverse)
+
+data %>% 
+  filter(Race %in% c("B", "W", "L")) %>% 
+  filter(!is.na(Year)) %>% 
+  ggplot(aes(x = Age,
+             y = factor(Year),
+             fill = Race)) +
+  geom_density_ridges(alpha = 0.6, 
+                      scale = 0.9)  +
+  theme_ridges(font_size = 10) +
+  scale_x_continuous(breaks = seq(0, 100, 10),
+                     labels = seq(0, 100, 10)) +
+  xlab("Age at death (years)") +
+  ylab("Year") +
+  theme(axis.title = element_text(size = 14))
+```
+
+## Method
+
+By far the most common way that people are killed by police is with a gun.
+Deaths by vehicle involve women more often than men.
+Other methods are less common, and frankly, I do not know what the acronyms stand for (R, T, U..)
+
+```{r plot-method}
+data %>% 
+  filter(!is.na(Year)) %>% 
+  filter(Method != "NA") %>% 
+  filter(Gender %in% c("M", "F", NA)) %>% 
+  group_by(Year, 
+           Gender,
+           Method) %>% 
+  tally() %>% 
+  mutate(perc = n / sum(n) * 100)  %>% 
+  ggplot(aes(Method,
+             perc,
+             fill = Gender)) +
+  geom_col() +
+  facet_grid(Gender~Year) +
+  theme_minimal(base_size = 10) +
+  xlab("Method of killing") +
+  ylab("Percentage of all\npeople killed by police\nby gender") 
+```
+
+## Map casualties by state
+
+In 2016, the state with the largest number of people killed by police was California.
+
+```{r map 2016}
+#install.packages(c("statebins", "viridis"))
+library(statebins) # using GitHub version
+library(viridis)
+
+# we need to convert state abbreviations to state names for the statebins function
+state_abb <- data_frame(state_name = state.name,
+                        state_abb = state.abb)
+
+# we need to add the state popluations so we can get a proportion of people in each state
+# we got this from https://www2.census.gov/programs-surveys/popest/tables/2010-2016/state/totals/nst-est2016-01.xlsx
+state_populations <- readr::read_csv("data-raw/nst-est2016-01.csv")
+
+# clean it a little
+state_populations <-  
+  state_populations %>% 
+  mutate(state_name = gsub("\\.", "", X__1)) %>%
+  left_join(state_abb)
+
+# compute deaths by state and as deaths per 1000 people in each state
+by_state16 <- data %>% 
+  filter(Year == 2016) %>% 
+  group_by(State) %>% 
+  tally() %>% 
+  left_join(state_abb, by = c('State' = 'state_abb')) %>% 
+  filter(!is.na(state_name)) %>% 
+  left_join(state_populations) %>% 
+  mutate(per_n_people = (n / `2016`) * 1000000)
+
+# plot 'statebin' style map
+ggplot(by_state16, 
+       aes(state = state_name, 
+           fill = n)) +
+  geom_statebins() +
+  coord_equal() +
+  scale_fill_viridis() +
+  theme_statebins() +
+  labs(title = "Total number of people killed by police \nin each state in 2016") +
+  theme(legend.title=element_blank()) 
+```
+
+The difference between 2016 and 2019 is hardly visible, with the exception of Texas.
+I downloaded this census on 20 July from <https://www2.census.gov/programs-surveys/popest/tables/2010-2019/state/asrh/>
+
+```{r map 2019}
+state_population19 <- readr::read_csv("data-raw/sc-est2019-alldata5.csv")
+
+# clean it a little
+state_pop17_19 <- state_population19 %>% 
+	group_by(NAME) %>% 
+	summarize(pop2017= sum(POPESTIMATE2017), pop2018 = sum(POPESTIMATE2018), pop2019=sum(POPESTIMATE2019)) %>% 
+	rename(state_name = NAME)
+
+state_pop17_19 %>% 
+	select(state_name, pop2017) %>% 
+	glimpse()
+
+# compute deaths by state and as deaths per 1000 people in each state
+by_state19 <- data %>% 
+  filter(Year == 2019) %>% 
+  group_by(State) %>% 
+  tally() %>% 
+  left_join(state_abb, by = c('State' = 'state_abb')) %>% 
+  filter(!is.na(state_name)) %>% 
+  left_join(state_pop17_19) %>% 
+  mutate(per_n_people = (n / `pop2019`) * 1000000)
+
+# plot 'statebin' style map
+ggplot(by_state19, 
+       aes(state = state_name, 
+           fill = n)) +
+  geom_statebins() +
+  coord_equal() +
+  scale_fill_viridis() +
+  theme_statebins() +
+  labs(title = "Total number of people killed by police \nin each state in 2019") +
+  theme(legend.title=element_blank()) 
+```
+
+Let's now divide the totals by the number of people in each state: in 2016, New Mexico and Alaska have the highest proportions of people killed by police.
+
+```{r ratios by state2016}
+ggplot(by_state16, 
+       aes(state = state_name, 
+           fill = per_n_people)) +
+  geom_statebins() +
+  coord_equal() +
+  scale_fill_viridis() +
+  theme_statebins() +
+  labs(title = "Number of people killed by police in each state in 2016,\nper 1,000,000 people")  +
+  theme(legend.title=element_blank()) 
+```
+
+In 2019 the primacy still goes to least populous state of Alaska, but New Mexico, Oklahoma and West Virginia follow in tight succession (while Texas stands at 1 per 100,000)
+
+```{r ratios by state2019}
+ggplot(by_state19, 
+       aes(state = state_name, 
+           fill = per_n_people)) +
+  geom_statebins() +
+  coord_equal() +
+  scale_fill_viridis() +
+  theme_statebins() +
+  labs(title = "Number of people killed by police in each state in 2019,\nper 1,000,000 people")  +
+  theme(legend.title=element_blank()) 
+```
+
+Now it is your turn.
+Apply the webscraping part of this script to a subject of your own!
+(But consider what you can use the output for first :)
